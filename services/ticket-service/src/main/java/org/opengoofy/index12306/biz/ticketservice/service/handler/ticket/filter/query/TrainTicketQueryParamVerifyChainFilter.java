@@ -58,7 +58,7 @@ public class TrainTicketQueryParamVerifyChainFilter implements TrainTicketQueryC
     /**
      * 缓存数据为空并且已经加载过标识
      */
-    private static boolean CACHE_DATA_ISNULL_AND_LOAD_FLAG = false;
+    private static volatile boolean CACHE_DATA_ISNULL_AND_LOAD_FLAG = false;
 
     @Override
     public void handler(TicketPageQueryReqDTO requestParam) {
@@ -72,13 +72,14 @@ public class TrainTicketQueryParamVerifyChainFilter implements TrainTicketQueryC
         if (emptyCount == 0L) {
             return;
         }
-        if (emptyCount == 1L || (emptyCount == 2L && CACHE_DATA_ISNULL_AND_LOAD_FLAG && distributedCache.hasKey(QUERY_ALL_REGION_LIST))) {
+        if (emptyCount == 1L || (emptyCount == 2L && CACHE_DATA_ISNULL_AND_LOAD_FLAG)) {
             throw new ClientException("出发地或目的地不存在");
         }
         RLock lock = redissonClient.getLock(LOCK_QUERY_ALL_REGION_LIST);
         lock.lock();
         try {
             if (distributedCache.hasKey(QUERY_ALL_REGION_LIST)) {
+                CACHE_DATA_ISNULL_AND_LOAD_FLAG = true;
                 actualExistList = hashOperations.multiGet(
                         QUERY_ALL_REGION_LIST,
                         ListUtil.toList(requestParam.getFromStation(), requestParam.getToStation())
