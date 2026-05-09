@@ -46,7 +46,7 @@ public class TicketController {
     private final TicketService ticketService;
 
     /**
-     * 根据条件查询车票
+     * 根据出发站、到达站、出发日期等条件分页查询可用车次及余票信息（V1 版本）
      */
     @GetMapping("/api/ticket-service/ticket/query")
     public Result<TicketPageQueryRespDTO> pageListTicketQuery(TicketPageQueryReqDTO requestParam) {
@@ -54,7 +54,7 @@ public class TicketController {
     }
 
     /**
-     * 购买车票
+     * 购买车票（V1 版本，列车级分布式锁，适合低并发场景）
      */
     @PostMapping("/api/ticket-service/ticket/purchase")
     public Result<TicketPurchaseRespDTO> purchaseTickets(@RequestBody PurchaseTicketReqDTO requestParam) {
@@ -62,7 +62,7 @@ public class TicketController {
     }
 
     /**
-     * 购买车票v2
+     * 购买车票（V2 版本，细粒度锁 + 令牌桶并发控制，适合高并发场景）
      */
     @PostMapping("/api/ticket-service/ticket/purchase/v2")
     public Result<TicketPurchaseRespDTO> purchaseTicketsV2(@RequestBody PurchaseTicketReqDTO requestParam) {
@@ -70,7 +70,7 @@ public class TicketController {
     }
 
     /**
-     * 取消车票订单
+     * 取消已创建的订单，释放已锁定的座位和缓存余票
      */
     @PostMapping("/api/ticket-service/ticket/cancel")
     public Result<Void> cancelTicketOrder(@RequestBody CancelTicketOrderReqDTO requestParam) {
@@ -79,7 +79,7 @@ public class TicketController {
     }
 
     /**
-     * 支付单详情查询
+     * 根据订单号查询支付单详情（支付状态、金额、支付渠道等）
      */
     @GetMapping("/api/ticket-service/ticket/pay/query")
     public Result<PayInfoRespDTO> getPayInfo(@RequestParam(value = "orderSn") String orderSn) {
@@ -87,7 +87,7 @@ public class TicketController {
     }
 
     /**
-     * 公共退款接口
+     * 公共退款接口，支持全额退款和部分退款
      */
     @PostMapping("/api/ticket-service/ticket/refund")
     public Result<RefundTicketRespDTO> commonTicketRefund(@RequestBody RefundTicketReqDTO requestParam) {

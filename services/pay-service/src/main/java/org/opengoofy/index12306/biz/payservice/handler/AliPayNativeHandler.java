@@ -55,6 +55,12 @@ public class AliPayNativeHandler extends AbstractPayHandler implements AbstractE
 
     private final AliPayProperties aliPayProperties;
 
+    /**
+     * 支付宝页面支付（NATIVE）：生成支付表单 HTML 页面，用户跳转到支付宝完成支付
+     * 金额单位说明：支付宝金额单位为元（如 100.50），需从上层传入的 PayRequest 中获取
+     * 返回的 PayResponse.body 是支付宝返回的支付表单 HTML（做了引号替换处理，防止前端解析异常）
+     * 失败时通过 @Retryable 重试最多 3 次，每次间隔递增（1s, 1.5s, 2.25s）
+     */
     @SneakyThrows(value = AlipayApiException.class)
     @Override
     @Retryable(value = ServiceException.class, maxAttempts = 3, backoff = @Backoff(delay = 1000, multiplier = 1.5))

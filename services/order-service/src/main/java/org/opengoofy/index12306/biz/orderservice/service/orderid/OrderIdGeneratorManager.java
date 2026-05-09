@@ -40,15 +40,23 @@ public final class OrderIdGeneratorManager implements InitializingBean {
     private static DistributedIdGenerator DISTRIBUTED_ID_GENERATOR;
 
     /**
-     * 生成订单全局唯一 ID
+     * 生成订单全局唯一 ID（基因法）
+     * 格式：分布式雪花ID + userId % 1000000（后6位取模）
+     * 基因法目的：将用户 ID 的后缀融入订单号，使同一用户的订单 hash 到同一个数据库分片
+     * ShardingSphere 可以通过订单号的后6位定位到目标数据库和表，无需每次都传 userId
      *
-     * @param userId 用户名
-     * @return 订单 ID
+     * @param userId 用户 ID
+     * @return 订单号（雪花ID + 用户ID取模后缀）
      */
     public static String generateId(long userId) {
         return DISTRIBUTED_ID_GENERATOR.generateId() + String.valueOf(userId % 1000000);
     }
 
+    /**
+     * Spring Bean 初始化：通过 Redis 分布式锁 + Redis 原子递增获取唯一的 nodeId（工作机器标识）
+     * nodeId 范围：0-31（最多 32 个服务实例），超过最大值自动回卷到 0
+     * 获取到 nodeId 后创建单例 DistributedIdGenerator
+     */
     @Override
     public void afterPropertiesSet() throws Exception {
         String LOCK_KEY = "distributed_id_generator_lock_key";

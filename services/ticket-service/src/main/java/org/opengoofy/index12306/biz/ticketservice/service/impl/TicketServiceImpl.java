@@ -162,27 +162,66 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
     @Value("${framework.cache.redis.prefix:}")
     private String cacheRedisPrefix;
 
+    /**
+     * V1 版本车票查询：采用 Cache-Aside 模式 + DCL（双重检查锁）保证缓存一致性
+     * <p>
+     * 整体流程分为五大阶段：
+     * <ol>
+     *   <li>参数校验（责任链）</li>
+     *   <li>站点→地区映射（Redis Hash: REGION_TRAIN_STATION_MAPPING）</li>
+     *   <li>地区→列车列表（Redis Hash: REGION_TRAIN_STATION）</li>
+     *   <li>逐车次获取票价（Redis String / DB）</li>
+     *   <li>逐车次逐座型获取余票（Redis Hash / DB）</li>
+     * </ol>
+     * 性能问题：阶段4和5对每个车次逐一查Redis/DB，交互次数 = 车次数 × 座型数，高并发下是性能深渊。
+     * V2 版本通过 Redis Pipeline 将 N 次网络IO 合并为 2 次批量操作，性能提升 300%-500%+。
+     */
     @Override
     public TicketPageQueryRespDTO pageListTicketQueryV1(TicketPageQueryReqDTO requestParam) {
-        // 责任链模式 验证城市名称是否存在、不存在加载缓存以及出发日期不能小于当前日期等等
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 阶段一：参数校验（责任链模式）
+        // 验证：城市名称是否合法、出发日期是否在预售期内、日期不能小于当前日期等
+        // 多个校验器按 order 排序依次执行，任何一个不通过都会抛异常
+        // ═══════════════════════════════════════════════════════════════════════
         ticketPageQueryAbstractChainContext.handler(TicketChainMarkEnum.TRAIN_QUERY_FILTER.name(), requestParam);
         StringRedisTemplate stringRedisTemplate = (StringRedisTemplate) distributedCache.getInstance();
-        // 列车查询逻辑较为复杂，详细解析文章查看 https://nageoffer.com/12306/question
-        // v1 版本存在严重的性能深渊问题，v2 版本完美的解决了该问题。通过 Jmeter 压测聚合报告得知，性能提升在 300% - 500%+
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 阶段二：站点编码 → 地区名称 映射（Cache-Aside + DCL 双重检查锁）
+        //
+        // 为什么需要这个映射？
+        //   用户输入的是站点编码（如 "BJP" = 北京），而后续查列车时用的是
+        //   地区维度（"北京"→"杭州"之间运行的所有列车）。因此需要先把站码
+        //   翻译成地区名。
+        //
+        // Redis 数据结构：
+        //   Hash Key: REGION_TRAIN_STATION_MAPPING
+        //   Fields:   "BJP" → "北京", "HZH" → "杭州", ...
+        //
+        // 缓存未命中时：
+        //   1. 加分布式锁，再次检查缓存（防止并发重复加载）
+        //   2. 全量加载 t_station 表，构建 code→regionName 映射
+        //   3. 写入 Redis Hash
+        // ═══════════════════════════════════════════════════════════════════════
         List<Object> stationDetails = stringRedisTemplate.opsForHash()
                 .multiGet(REGION_TRAIN_STATION_MAPPING, Lists.newArrayList(requestParam.getFromStation(), requestParam.getToStation()));
         long count = stationDetails.stream().filter(Objects::isNull).count();
         if (count > 0) {
+            // 缓存未命中：加锁后执行 DCL 二次检查
             RLock lock = redissonClient.getLock(LOCK_REGION_TRAIN_STATION_MAPPING);
             lock.lock();
             try {
+                // --- DCL 第二次检查：可能上一个持锁线程已经加载完了 ---
                 stationDetails = stringRedisTemplate.opsForHash()
                         .multiGet(REGION_TRAIN_STATION_MAPPING, Lists.newArrayList(requestParam.getFromStation(), requestParam.getToStation()));
                 count = stationDetails.stream().filter(Objects::isNull).count();
                 if (count > 0) {
+                    // --- 全量加载 t_station 表，构建所有车站的 code→地区映射 ---
                     List<StationDO> stationDOList = stationMapper.selectList(Wrappers.emptyWrapper());
                     Map<String, String> regionTrainStationMap = new HashMap<>();
                     stationDOList.forEach(each -> regionTrainStationMap.put(each.getCode(), each.getRegionName()));
+                    // --- 写入 Redis Hash，后续请求直接命中缓存 ---
                     stringRedisTemplate.opsForHash().putAll(REGION_TRAIN_STATION_MAPPING, regionTrainStationMap);
                     stationDetails = new ArrayList<>();
                     stationDetails.add(regionTrainStationMap.get(requestParam.getFromStation()));
@@ -192,6 +231,26 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                 lock.unlock();
             }
         }
+        // 此时 stationDetails = ["北京", "杭州"]
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 阶段三：地区对 → 列车列表（Cache-Aside + DCL）
+        //
+        // Redis 数据结构：
+        //   Hash Key: REGION_TRAIN_STATION + 北京 + 杭州   （如 "train_station:北京_杭州"）
+        //   Fields:   "1_北京南_杭州东" → JSON{TicketListDTO}
+        //             "3_北京_杭州"     → JSON{TicketListDTO}
+        //
+        // 每个 field 代表一列从北京地区到杭州地区的列车，key 是 trainId+出发站+到达站。
+        // value 是车次基本信息的 JSON（车次号、出发时间、到达时间、历时等），
+        // 但此时还不包含票价和余票信息。
+        //
+        // 缓存未命中时：
+        //   1. 加锁 DCL
+        //   2. 查 t_train_station_relation 表，找出 startRegion=北京 AND endRegion=杭州 的所有关系
+        //   3. 对每条关系，通过 TrainDO 缓存/DB 获取车次详情
+        //   4. 组装 TicketListDTO（不含票价和余票）写入 Redis
+        // ═══════════════════════════════════════════════════════════════════════
         List<TicketListDTO> seatResults = new ArrayList<>();
         String buildRegionTrainStationHashKey = String.format(REGION_TRAIN_STATION, stationDetails.get(0), stationDetails.get(1));
         Map<Object, Object> regionTrainStationAllMap = stringRedisTemplate.opsForHash().entries(buildRegionTrainStationHashKey);
@@ -199,13 +258,18 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
             RLock lock = redissonClient.getLock(LOCK_REGION_TRAIN_STATION);
             lock.lock();
             try {
+                // --- DCL 第二次检查 ---
                 regionTrainStationAllMap = stringRedisTemplate.opsForHash().entries(buildRegionTrainStationHashKey);
                 if (MapUtil.isEmpty(regionTrainStationAllMap)) {
+                    // --- 从 DB 查该地区对的所有列车关系 ---
                     LambdaQueryWrapper<TrainStationRelationDO> queryWrapper = Wrappers.lambdaQuery(TrainStationRelationDO.class)
                             .eq(TrainStationRelationDO::getStartRegion, stationDetails.get(0))
                             .eq(TrainStationRelationDO::getEndRegion, stationDetails.get(1));
                     List<TrainStationRelationDO> trainStationRelationList = trainStationRelationMapper.selectList(queryWrapper);
+
+                    // --- 逐条组装车次基本信息 ---
                     for (TrainStationRelationDO each : trainStationRelationList) {
+                        // safeGet: 封装了 get-if-null-then-load-put 逻辑，带过期时间
                         TrainDO trainDO = distributedCache.safeGet(
                                 TRAIN_INFO + each.getTrainId(),
                                 TrainDO.class,
@@ -214,41 +278,68 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                                 TimeUnit.DAYS);
                         TicketListDTO result = new TicketListDTO();
                         result.setTrainId(String.valueOf(trainDO.getId()));
-                        result.setTrainNumber(trainDO.getTrainNumber());
-                        result.setDepartureTime(convertDateToLocalTime(each.getDepartureTime(), "HH:mm"));
-                        result.setArrivalTime(convertDateToLocalTime(each.getArrivalTime(), "HH:mm"));
-                        result.setDuration(DateUtil.calculateHourDifference(each.getDepartureTime(), each.getArrivalTime()));
-                        result.setDeparture(each.getDeparture());
-                        result.setArrival(each.getArrival());
-                        result.setDepartureFlag(each.getDepartureFlag());
-                        result.setArrivalFlag(each.getArrivalFlag());
-                        result.setTrainType(trainDO.getTrainType());
-                        result.setTrainBrand(trainDO.getTrainBrand());
+                        result.setTrainNumber(trainDO.getTrainNumber());                // 车次号，如 "G35"
+                        result.setDepartureTime(convertDateToLocalTime(each.getDepartureTime(), "HH:mm")); // 出发时间 "09:56"
+                        result.setArrivalTime(convertDateToLocalTime(each.getArrivalTime(), "HH:mm"));     // 到达时间 "15:14"
+                        result.setDuration(DateUtil.calculateHourDifference(each.getDepartureTime(), each.getArrivalTime())); // 历时 "5时18分"
+                        result.setDeparture(each.getDeparture());                        // 出发站名，如 "北京南"
+                        result.setArrival(each.getArrival());                            // 到达站名，如 "杭州东"
+                        result.setDepartureFlag(each.getDepartureFlag());                // 是否始发站
+                        result.setArrivalFlag(each.getArrivalFlag());                    // 是否终点站
+                        result.setTrainType(trainDO.getTrainType());                     // 列车类型 0-高铁 1-动车 2-普速
+                        result.setTrainBrand(trainDO.getTrainBrand());                   // 列车品牌 0-GC 1-D 2-Z ...
                         if (StrUtil.isNotBlank(trainDO.getTrainTag())) {
-                            result.setTrainTags(StrUtil.split(trainDO.getTrainTag(), ","));
+                            result.setTrainTags(StrUtil.split(trainDO.getTrainTag(), ",")); // 标签: 复兴号/智能动车/静音车厢
                         }
                         long betweenDay = cn.hutool.core.date.DateUtil.betweenDay(each.getDepartureTime(), each.getArrivalTime(), false);
-                        result.setDaysArrived((int) betweenDay);
-                        result.setSaleStatus(new Date().after(trainDO.getSaleTime()) ? 0 : 1);
+                        result.setDaysArrived((int) betweenDay);                         // 到达天数（跨天车次 > 0）
+                        result.setSaleStatus(new Date().after(trainDO.getSaleTime()) ? 0 : 1);   // 是否已起售
                         result.setSaleTime(convertDateToLocalTime(trainDO.getSaleTime(), "MM-dd HH:mm"));
+
                         seatResults.add(result);
-                        regionTrainStationAllMap.put(CacheUtil.buildKey(String.valueOf(each.getTrainId()), each.getDeparture(), each.getArrival()), JSON.toJSONString(result));
+                        // --- 存入 regionTrainStationAllMap，用于写 Redis ---
+                        regionTrainStationAllMap.put(
+                                CacheUtil.buildKey(String.valueOf(each.getTrainId()), each.getDeparture(), each.getArrival()),
+                                JSON.toJSONString(result));
                     }
+                    // --- 批量写入 Redis Hash，后续请求直接命中 ---
                     stringRedisTemplate.opsForHash().putAll(buildRegionTrainStationHashKey, regionTrainStationAllMap);
                 }
             } finally {
                 lock.unlock();
             }
         }
+
+        // --- 缓存命中时 seatResults 为空，从 regionTrainStationAllMap 反序列化 ---
         seatResults = CollUtil.isEmpty(seatResults)
                 ? regionTrainStationAllMap.values().stream().map(each -> JSON.parseObject(each.toString(), TicketListDTO.class)).toList()
                 : seatResults;
+
+        // --- 按出发时间升序排列 ---
         seatResults = seatResults.stream().sorted(new TimeStringComparator()).toList();
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 阶段四 & 五：加载票价和余票（V1 的性能瓶颈所在）
+        //
+        // 对 seatResults 中每个车次，逐一执行：
+        //   ① 查票价缓存（Redis String: train_station_price_{trainId}_{departure}_{arrival}）
+        //     缓存 miss → 查 t_train_station_price 表，回种 Redis
+        //   ② 对票价返回的每个座型，查余票缓存（Redis Hash: remaining_ticket_{trainId}_{departure}_{arrival}）
+        //     缓存 miss → 触发 SeatMarginCacheLoader.load() 从 DB 全量加载回种
+        //
+        // 问题：如果返回 20 个车次、每个 3 种座型，最坏情况 = 20×3=60 次 Redis GET
+        //      + N 次缓存 miss 触发的 DB 查询 + 锁竞争。每次都是同步阻塞 IO。
+        // ═══════════════════════════════════════════════════════════════════════
         for (TicketListDTO each : seatResults) {
+
+            // --- 阶段四：查票价。key = train_station_price_{trainId}_{departure}_{arrival} ---
+            // safeGet 封装了 get-if-null-then-load-put 的 Cache-Aside 逻辑
             String trainStationPriceStr = distributedCache.safeGet(
                     String.format(TRAIN_STATION_PRICE, each.getTrainId(), each.getDeparture(), each.getArrival()),
                     String.class,
                     () -> {
+                        // 缓存 miss：查 t_train_station_price 表
+                        // 返回该列车在该区间所有座型的价格列表
                         LambdaQueryWrapper<TrainStationPriceDO> trainStationPriceQueryWrapper = Wrappers.lambdaQuery(TrainStationPriceDO.class)
                                 .eq(TrainStationPriceDO::getDeparture, each.getDeparture())
                                 .eq(TrainStationPriceDO::getArrival, each.getArrival())
@@ -259,22 +350,51 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                     TimeUnit.DAYS
             );
             List<TrainStationPriceDO> trainStationPriceDOList = JSON.parseArray(trainStationPriceStr, TrainStationPriceDO.class);
+
+            // --- 阶段五：查余票。对每个座型逐一查 Redis，miss 则走 DB ---
             List<SeatClassDTO> seatClassList = new ArrayList<>();
             trainStationPriceDOList.forEach(item -> {
-                String seatType = String.valueOf(item.getSeatType());
+                String seatType = String.valueOf(item.getSeatType());  // 座型编码: 0-商务座 1-一等座 2-二等座 ...
+
+                // keySuffix = trainId_departure_arrival，与 SeatMarginCacheLoader 中保持一致
                 String keySuffix = StrUtil.join("_", each.getTrainId(), item.getDeparture(), item.getArrival());
-                Object quantityObj = stringRedisTemplate.opsForHash().get(TRAIN_STATION_REMAINING_TICKET + keySuffix, seatType);
+                // Redis Hash: remaining_ticket_{trainId}_{departure}_{arrival}
+                //   field: seatType (0/1/2/...) → value: 余票数量字符串
+                Object quantityObj = stringRedisTemplate.opsForHash()
+                        .get(TRAIN_STATION_REMAINING_TICKET + keySuffix, seatType);
+
                 int quantity = Optional.ofNullable(quantityObj)
                         .map(Object::toString)
                         .map(Integer::parseInt)
                         .orElseGet(() -> {
-                            Map<String, String> seatMarginMap = seatMarginCacheLoader.load(String.valueOf(each.getTrainId()), seatType, item.getDeparture(), item.getArrival());
-                            return Optional.ofNullable(seatMarginMap.get(String.valueOf(item.getSeatType()))).map(Integer::parseInt).orElse(0);
+                            // --- 缓存 miss：触发 SeatMarginCacheLoader 全量加载回种 ---
+                            // load() 内部会：加锁 → DCL → 查全路线区间 → 对每个区间查 DB count → 批量写 Redis
+                            Map<String, String> seatMarginMap = seatMarginCacheLoader.load(
+                                    String.valueOf(each.getTrainId()), seatType,
+                                    item.getDeparture(), item.getArrival());
+                            return Optional.ofNullable(seatMarginMap.get(String.valueOf(item.getSeatType())))
+                                    .map(Integer::parseInt).orElse(0);
                         });
-                seatClassList.add(new SeatClassDTO(item.getSeatType(), quantity, new BigDecimal(item.getPrice()).divide(new BigDecimal("100"), 1, RoundingMode.HALF_UP), false));
+
+                // 组装座型信息：类型、余票数、价格（分转元，÷100）、是否为候补
+                seatClassList.add(new SeatClassDTO(
+                        item.getSeatType(),
+                        quantity,
+                        new BigDecimal(item.getPrice()).divide(new BigDecimal("100"), 1, RoundingMode.HALF_UP),
+                        false));
             });
             each.setSeatClassList(seatClassList);
         }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 阶段六：组装响应 — 主数据 + 筛选器选项
+        //
+        // trainList           → 表格数据（每个车次的完整信息）
+        // departureStationList → "出发车站"筛选复选框的选项（从 trainList distinct）
+        // arrivalStationList   → "到达车站"筛选复选框的选项
+        // trainBrandList       → "车次类型"筛选复选框的选项
+        // seatClassTypeList    → "车次席别"筛选复选框的选项
+        // ═══════════════════════════════════════════════════════════════════════
         return TicketPageQueryRespDTO.builder()
                 .trainList(seatResults)
                 .departureStationList(buildDepartureStationList(seatResults))
@@ -284,6 +404,11 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                 .build();
     }
 
+    /**
+     * V2 版本车票查询（高性能版）：使用 Redis Pipeline 批量获取票价和余票信息
+     * 核心优化：将 N 次独立的 Redis GET/HGET 合并为 2 次 Pipeline 批量操作，大幅减少网络 IO
+     * 流程：站点映射 -> 区域列车缓存 -> Pipeline 批量获取票价 -> Pipeline 批量获取余票 -> 组装结果
+     */
     @Override
     public TicketPageQueryRespDTO pageListTicketQueryV2(TicketPageQueryReqDTO requestParam) {
         // 责任链模式 验证城市名称是否存在、不存在加载缓存以及出发日期不能小于当前日期等等
@@ -351,6 +476,11 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                 .build();
     }
 
+    /**
+     * V1 版本购票：使用单一 Redisson 分布式锁锁定整列车，确保同一列车同时只有一个购票请求执行
+     * 优点：实现简单，能防止超卖
+     * 缺点：锁粒度过大（列车级），不同座位类型的购票请求也被串行化，高并发下性能差
+     */
     @ILog
     @Idempotent(
             uniqueKeyPrefix = "index12306-ticket:lock_purchase-tickets:",
@@ -385,6 +515,13 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
             .expireAfterWrite(10, TimeUnit.MINUTES)
             .build();
 
+    /**
+     * V2 版本购票（高性能版）：三层并发控制
+     * 第一层 - 令牌桶预校验：通过 Redis Lua 脚本原子检查余票是否足够，提前拦截无效请求
+     * 第二层 - 本地锁（Caffeine 缓存）：按 trainId + seatType 分组，JVM 内互斥，减少分布式锁竞争
+     * 第三层 - 分布式公平锁：跨 JVM 互斥，保证集群环境下的数据一致性
+     * 同时使用 @Idempotent 注解防止用户重复提交订单
+     */
     @ILog
     @Idempotent(
             uniqueKeyPrefix = "index12306-ticket:lock_purchase-tickets:",
@@ -455,6 +592,14 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
         }
     }
 
+    /**
+     * 购票核心事务执行逻辑：在 V1/V2 获取锁之后由代理调用（通过 self-injection 确保 @Transactional 生效）
+     * 执行步骤：
+     * 1. 根据列车类型选择对应的座位分配策略（商务座、一等座、二等座各有不同策略）
+     * 2. 批量保存车票记录到数据库
+     * 3. 远程调用订单服务创建订单（订单创建失败则回滚事务）
+     * 注意：本方法必须通过 ApplicationContextHolder 获取的代理 Bean 调用，直接调用会导致 @Transactional 失效
+     */
     @Override
     @Transactional(rollbackFor = Throwable.class)
     public TicketPurchaseRespDTO executePurchaseTickets(PurchaseTicketReqDTO requestParam) {
@@ -543,6 +688,12 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
         return payRemoteService.getPayInfo(orderSn).getData();
     }
 
+    /**
+     * 取消订单的补偿逻辑：解锁座位、回滚缓存余票、回滚令牌桶
+     * 缓存更新策略：
+     * - 非 binlog 模式：直接操作 Redis 缓存（DB + Cache 同步回滚）
+     * - binlog 模式：缓存由 Canal binlog 同步自动更新，此处跳过直接缓存操作
+     */
     @ILog
     @Override
     public void cancelTicketOrder(CancelTicketOrderReqDTO requestParam) {
@@ -580,6 +731,13 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
         }
     }
 
+    /**
+     * 公共退款接口实现：全额退款 / 部分退款
+     * 流程：责任链参数验证 -> 查询订单详情 -> 区分全额/部分退款 -> 计算退款金额 -> 调用 pay-service 执行退款
+     * 部分退款：从订单中过滤出指定子订单的乘客明细，只退这些乘客的票
+     * 全额退款：取整个订单下所有乘客明细执行退款
+     * 注意：当前返回 null 是占位实现，后续需要根据退款结果构造完整的 RefundTicketRespDTO
+     */
     @Override
     public RefundTicketRespDTO commonTicketRefund(RefundTicketReqDTO requestParam) {
         // 责任链模式，验证 1：参数必填
@@ -682,6 +840,11 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
         }, 10, TimeUnit.SECONDS);
     }
 
+    /**
+     * Spring Boot 启动后执行：通过 ApplicationContextHolder 获取 TicketService 的代理 Bean
+     * 目的：解决 Spring AOP 自调用问题。本类内部直接调用 @Transactional 方法时 AOP 不生效，
+     * 通过注入的代理 Bean 调用则可以触发事务、幂等、日志等 AOP 拦截
+     */
     @Override
     public void run(String... args) throws Exception {
         ticketService = ApplicationContextHolder.getBean(TicketService.class);

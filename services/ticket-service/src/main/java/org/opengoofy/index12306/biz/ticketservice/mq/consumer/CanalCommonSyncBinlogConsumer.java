@@ -53,6 +53,15 @@ public class CanalCommonSyncBinlogConsumer implements RocketMQListener<CanalBinl
     @Value("${ticket.availability.cache-update.type:}")
     private String ticketAvailabilityCacheUpdateType;
 
+    /**
+     * 消费 Canal 同步的 binlog 消息，根据表名路由到对应的缓存更新策略处理器
+     * 消息过滤条件：
+     * 1. 非 DDL 操作
+     * 2. old 数据非空（需要有变更前的数据做对比计算）
+     * 3. 必须是 UPDATE 操作
+     * 4. 配置 ticket.availability.cache-update.type=binlog 时才生效
+     * 使用 @Idempotent 防止 RocketMQ 重复投递导致缓存重复更新
+     */
     @Idempotent(
             uniqueKeyPrefix = "index12306-ticket:binlog_sync:",
             key = "#message.getId()+'_'+#message.hashCode()",

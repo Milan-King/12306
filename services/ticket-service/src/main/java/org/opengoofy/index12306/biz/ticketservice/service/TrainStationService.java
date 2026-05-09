@@ -29,32 +29,35 @@ import java.util.List;
 public interface TrainStationService {
 
     /**
-     * 根据列车 ID 查询站点信息
+     * 根据列车 ID 查询该列车所有的经停站信息
      *
      * @param trainId 列车 ID
-     * @return 列车经停站信息
+     * @return 列车经停站信息列表（含站点名称、到站/离站时间等）
      */
     List<TrainStationQueryRespDTO> listTrainStationQuery(String trainId);
 
     /**
-     * 计算列车站点路线关系
-     * 获取开始站点和目的站点及中间站点信息
+     * 计算从出发站到到达站之间经过的所有站点路线（含首尾站）
+     * 用于余票查询场景：需要知道用户乘车区间覆盖了哪些站点段
+     * 示例：北京->上海（经停天津、济南、南京）=> 北京-天津、天津-济南、济南-南京、南京-上海
      *
      * @param trainId   列车 ID
      * @param departure 出发站
      * @param arrival   到达站
-     * @return 列车站点路线关系信息
+     * @return 出发站到到达站之间所有相邻站点组成的路线关系
      */
     List<RouteDTO> listTrainStationRoute(String trainId, String departure, String arrival);
 
     /**
-     * 获取需列车站点扣减路线关系
-     * 获取开始站点和目的站点、中间站点以及关联站点信息
+     * 获取购票时需要扣减余票的所有站点区间（含首尾站、中间站及关联站点）
+     * 与 listTrainStationRoute 的区别：此方法返回的区间集合更大，包含了因区间组合使用而需要额外扣减的路段
+     * 用于购票和取消场景：确保所有受影响的站点区间余票都被正确更新
+     * 示例：购买北京->济南的票，需扣减北京-天津、北京-济南、天津-济南 三个区间的余票
      *
      * @param trainId   列车 ID
      * @param departure 出发站
      * @param arrival   到达站
-     * @return 需扣减列车站点路线关系信息
+     * @return 所有需要扣减余票的站点区间
      */
     List<RouteDTO> listTakeoutTrainStationRoute(String trainId, String departure, String arrival);
 }

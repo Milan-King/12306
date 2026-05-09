@@ -23,11 +23,20 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 座位选择器
+ * 座位选择器，提供两种座位选择算法
  * 公众号：马丁玩编程，回复：加群，添加马哥微信（备注：12306）获取项目资料
  */
 public class SeatSelection {
 
+    /**
+     * 相邻座位选择算法：在二维座位矩阵中查找连续的 numSeats 个空位（值为0的格子）
+     * 算法：逐行扫描，找到第一个有 numSeats 个连续空位的行，返回这些座位的行列坐标（从1开始）
+     * 如找不到则返回 null
+     *
+     * @param numSeats   需要选择的座位数量
+     * @param seatLayout 座位布局矩阵，0=空闲，1=已占用
+     * @return 选中座位的行列坐标数组，每行是 [row, col]（从1开始）；找不到返回 null
+     */
     public static int[][] adjacent(int numSeats, int[][] seatLayout) {
         int numRows = seatLayout.length;
         int numCols = seatLayout[0].length;
@@ -73,6 +82,14 @@ public class SeatSelection {
         return actualSeat;
     }
 
+    /**
+     * 非相邻座位选择算法：在二维座位矩阵中查找前 numSeats 个空位（不要求相邻）
+     * 算法：逐行逐列扫描，按顺序收集空闲座位，直到选够 numSeats 个
+     *
+     * @param numSeats   需要选择的座位数量
+     * @param seatLayout 座位布局矩阵，0=空闲，1=已占用
+     * @return 选中座位的行列坐标数组，每行是 [row, col]（从1开始）
+     */
     public static int[][] nonAdjacent(int numSeats, int[][] seatLayout) {
         int numRows = seatLayout.length;
         int numCols = seatLayout[0].length;

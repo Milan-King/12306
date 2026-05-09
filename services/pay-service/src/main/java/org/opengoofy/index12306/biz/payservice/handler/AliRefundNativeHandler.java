@@ -63,6 +63,13 @@ public class AliRefundNativeHandler extends AbstractRefundHandler implements Abs
 
     private final static String FUND_CHANGE = "Y";
 
+    /**
+     * 支付宝退款接口
+     * 金额转换：payAmount 单位为分，需除以 100 转换为元传给支付宝
+     * 退款成功判定：支付宝返回 code="10000"（调用成功）且 fundChange="Y"（资金变动）
+     * 退款成功后返回 TRADE_CLOSED 状态的 RefundResponse
+     * 失败时通过 @Retryable 重试最多 3 次
+     */
     @Retryable(value = {ServiceException.class}, maxAttempts = 3, backoff = @Backoff(delay = 1000, multiplier = 1.5))
     @SneakyThrows(value = AlipayApiException.class)
     @Override

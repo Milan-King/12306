@@ -72,6 +72,14 @@ public class PayServiceImpl implements PayService {
     private final PayResultCallbackOrderSendProduce payResultCallbackOrderSendProduce;
     private final DistributedCache distributedCache;
 
+    /**
+     * 创建支付单实现
+     * 1. 先查缓存，已支付过的订单直接返回缓存结果（防止重复支付）
+     * 2. 通过策略模式选择支付渠道（当前为支付宝页面支付）并调用第三方 API
+     * 3. 金额转换：元 -> 分（乘以100向上取整，适配支付宝金额单位）
+     * 4. 生成支付流水号（使用基因法融入订单号后缀，便于分库分表路由）
+     * 5. 将支付结果缓存 10 分钟，防止短期内重复查询造成资源浪费
+     */
     @Idempotent(
             type = IdempotentTypeEnum.SPEL,
             uniqueKeyPrefix = "index12306-pay:lock_create_pay:",
@@ -103,6 +111,13 @@ public class PayServiceImpl implements PayService {
         return BeanUtil.convert(result, PayRespDTO.class);
     }
 
+    /**
+     * 处理支付宝回调通知
+     * 1. 查询支付单是否存在
+     * 2. 更新支付状态、交易流水号、支付时间、支付金额
+     * 3. 当支付状态为 TRADE_SUCCESS 时，通过 RocketMQ 通知订单服务更新订单状态
+     * 注意：支付宝可能会多次发送回调通知，依靠 @Idempotent 注解保证幂等性
+     */
     @Transactional(rollbackFor = Exception.class)
     @Override
     public void callbackPay(PayCallbackReqDTO requestParam) {
@@ -146,6 +161,13 @@ public class PayServiceImpl implements PayService {
         return BeanUtil.convert(payDO, PayInfoRespDTO.class);
     }
 
+    /**
+     * 公共退款接口实现（简化版）
+     * 1. 查询支付单并校验存在性
+     * 2. 通过策略模式选择退款渠道（当前为支付宝退款）并调用第三方 API
+     * 3. 更新支付单状态为退款结果状态
+     * 注意：当前返回 null 为占位实现，后续需构造完整 RefundRespDTO 返回退款详情
+     */
     @Override
     public RefundRespDTO commonRefund(RefundReqDTO requestParam) {
         LambdaQueryWrapper<PayDO> queryWrapper = Wrappers.lambdaQuery(PayDO.class)

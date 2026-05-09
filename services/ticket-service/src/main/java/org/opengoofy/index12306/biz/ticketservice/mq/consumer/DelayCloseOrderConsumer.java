@@ -74,6 +74,15 @@ public class DelayCloseOrderConsumer implements RocketMQListener<MessageWrapper<
     @Value("${ticket.availability.cache-update.type:}")
     private String ticketAvailabilityCacheUpdateType;
 
+    /**
+     * 消费延迟关闭订单消息，在订单超时未支付时执行补偿操作：
+     * 1. 远程调用订单服务关闭订单（订单服务内部会检查订单状态，已支付的订单不会被关闭）
+     * 2. 如果订单已支付，跳过后续补偿逻辑
+     * 3. 解锁沿途座位（DB 层面恢复为可售）
+     * 4. 回滚 Redis 余票缓存（按沿途站点区间恢复余票计数）
+     * 5. 回滚令牌桶计数
+     * 当 ticket.availability.cache-update.type=binlog 时跳过直接缓存操作，由 Canal 同步完成
+     */
     @Idempotent(
             uniqueKeyPrefix = "index12306-ticket:delay_close_order:",
             key = "#delayCloseOrderEventMessageWrapper.getKeys()+'_'+#delayCloseOrderEventMessageWrapper.hashCode()",

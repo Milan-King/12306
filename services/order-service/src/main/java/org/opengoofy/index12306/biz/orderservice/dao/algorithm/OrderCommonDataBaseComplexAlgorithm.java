@@ -30,7 +30,12 @@ import java.util.Map;
 import java.util.Properties;
 
 /**
- * 订单数据库复合分片算法配置
+ * 订单库级复合分片算法（ShardingSphere）
+ * 分片策略：取 user_id 或 order_sn 的后6位进行 hash，再基于分库数量取模确定目标库
+ * 库级路由公式：hash(后缀) % shardingCount / tableShardingCount
+ * - shardingCount：总分片数（库数 * 表数），如 32（4库8表）
+ * - tableShardingCount：每个库的表数，如 8
+ * 基因法关联：订单号生成时已融入 userId%1000000，因此通过订单号后6位也能路由到同一分库
  * 公众号：马丁玩编程，回复：加群，添加马哥微信（备注：12306）获取项目资料
  */
 public class OrderCommonDataBaseComplexAlgorithm implements ComplexKeysShardingAlgorithm {
@@ -44,6 +49,11 @@ public class OrderCommonDataBaseComplexAlgorithm implements ComplexKeysShardingA
     private static final String SHARDING_COUNT_KEY = "sharding-count";
     private static final String TABLE_SHARDING_COUNT_KEY = "table-sharding-count";
 
+    /**
+     * 根据分片值计算目标数据库名称（如 ds_0, ds_1 等）
+     * 优先使用 user_id 作为分片键，若不存在则使用 order_sn 作为分片键
+     * 两种分片键的路由算法相同：取后6位 -> hash -> 绝对值 -> mod(总分片数) / 每库表数
+     */
     @Override
     public Collection<String> doSharding(Collection availableTargetNames, ComplexKeysShardingValue shardingValue) {
         Map<String, Collection<Comparable<?>>> columnNameAndShardingValuesMap = shardingValue.getColumnNameAndShardingValuesMap();

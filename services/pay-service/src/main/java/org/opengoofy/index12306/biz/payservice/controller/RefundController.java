@@ -38,7 +38,7 @@ public class RefundController {
     private final RefundService refundService;
 
     /**
-     * 公共退款接口
+     * 公共退款接口（新版完整退款流程，替代旧版 {@link PayController#refund(RefundReqDTO)} 的简化版本）
      */
     @PostMapping("/api/pay-service/common/refund")
     public Result<RefundRespDTO> commonRefund(@RequestBody RefundReqDTO requestParam) {

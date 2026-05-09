@@ -88,6 +88,9 @@ public class OrderServiceImpl implements OrderService {
     private final DelayCloseOrderSendProduce delayCloseOrderSendProduce;
     private final UserRemoteService userRemoteService;
 
+    /**
+     * 根据订单号查询订单详情，同时查询订单主表和子订单表（乘客明细）
+     */
     @Override
     public TicketOrderDetailRespDTO queryTicketOrderByOrderSn(String orderSn) {
         LambdaQueryWrapper<OrderDO> queryWrapper = Wrappers.lambdaQuery(OrderDO.class)
@@ -101,6 +104,11 @@ public class OrderServiceImpl implements OrderService {
         return result;
     }
 
+    /**
+     * 分页查询订单列表，根据 statusType 映射为具体的订单状态集合：
+     * 0 -> 待支付；1 -> 已支付 + 部分退款 + 全额退款；2 -> 已完成
+     * 使用 @AutoOperate 注解自动填充乘客详情数据
+     */
     @AutoOperate(type = TicketOrderDetailRespDTO.class, on = "data.records")
     @Override
     public PageResponse<TicketOrderDetailRespDTO> pageTicketOrder(TicketOrderPageQueryReqDTO requestParam) {
@@ -119,6 +127,13 @@ public class OrderServiceImpl implements OrderService {
         });
     }
 
+    /**
+     * 创建订单的核心实现：
+     * 1. 基因法生成订单号：雪花ID + userId % 1000000（后6位融入订单号，实现按用户分库分表路由）
+     * 2. 插入 t_order（订单主表）、t_order_item（子订单）、t_order_item_passenger（乘客关联表）
+     * 3. 发送 RocketMQ 延迟关闭消息（delayLevel=14 ~=10分钟），超时未支付自动关闭订单
+     * 如果延迟消息发送失败，记录日志但不影响订单创建（订单已持久化，后续可由补偿机制处理）
+     */
     @Transactional(rollbackFor = Exception.class)
     @Override
     public String createTicketOrder(TicketOrderCreateReqDTO requestParam) {
@@ -189,6 +204,10 @@ public class OrderServiceImpl implements OrderService {
         return orderSn;
     }
 
+    /**
+     * 关闭订单（延迟消息触发），仅当订单状态为 PENDING_PAYMENT 时才执行关闭
+     * 实际上委托 cancelTickOrder 执行，语义上区分"超时关闭"和"主动取消"
+     */
     @Transactional(rollbackFor = Exception.class)
     @Override
     public boolean closeTickOrder(CancelTicketOrderReqDTO requestParam) {
@@ -204,6 +223,11 @@ public class OrderServiceImpl implements OrderService {
         return cancelTickOrder(requestParam);
     }
 
+    /**
+     * 取消订单，使用分布式锁防止并发重复取消
+     * 锁 key：order:canal:order_sn_{订单号}
+     * 同时更新订单主表和子订单表的状态为 CLOSED
+     */
     @Transactional(rollbackFor = Exception.class)
     @Override
     public boolean cancelTickOrder(CancelTicketOrderReqDTO requestParam) {
@@ -243,6 +267,11 @@ public class OrderServiceImpl implements OrderService {
         return true;
     }
 
+    /**
+     * 订单状态反转（支付成功后调用），将订单状态从 PENDING_PAYMENT 翻转为目标状态
+     * 使用分布式锁（key: order:status-reversal:order_sn_{订单号}）防止并发重复反转
+     * 同时翻转订单主表和所有子订单的状态
+     */
     @Override
     public void statusReversal(OrderStatusReversalDTO requestParam) {
         LambdaQueryWrapper<OrderDO> queryWrapper = Wrappers.lambdaQuery(OrderDO.class)
@@ -279,6 +308,9 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
+    /**
+     * 更新订单支付信息：写入支付时间和支付渠道
+     */
     @Override
     public void payCallbackOrder(PayResultCallbackOrderEvent requestParam) {
         OrderDO updateOrderDO = new OrderDO();
@@ -292,6 +324,11 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
+    /**
+     * 查询本人车票订单（通过身份证号关联）
+     * 流程：获取当前用户实名信息 -> 通过身份证号查询 t_order_item_passenger -> 关联查询订单和子订单详情
+     * 此方法允许用户查询他人为其购买的车票（只要身份证号匹配即可）
+     */
     @Override
     public PageResponse<TicketOrderDetailSelfRespDTO> pageSelfTicketOrder(TicketOrderSelfPageQueryReqDTO requestParam) {
         Result<UserQueryActualRespDTO> userActualResp = userRemoteService.queryActualUserByUsername(UserContext.getUsername());
@@ -313,6 +350,12 @@ public class OrderServiceImpl implements OrderService {
         });
     }
 
+    /**
+     * 根据前端传入的状态类型（statusType）映射为具体的订单状态列表
+     * 0 -> 待支付（PENDING_PAYMENT）
+     * 1 -> 已支付 + 部分退款 + 全额退款（ALREADY_PAID / PARTIAL_REFUND / FULL_REFUND）
+     * 2 -> 已完成（COMPLETED）
+     */
     private List<Integer> buildOrderStatusList(TicketOrderPageQueryReqDTO requestParam) {
         List<Integer> result = new ArrayList<>();
         switch (requestParam.getStatusType()) {

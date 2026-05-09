@@ -29,7 +29,12 @@ import java.util.Map;
 import java.util.Properties;
 
 /**
- * 订单表相关复合分片算法配置
+ * 订单表级复合分片算法（ShardingSphere）
+ * 分片策略：取 user_id 或 order_sn 的后6位进行 hash，再基于分表数量取模确定目标表
+ * 表级路由公式：hash(后缀) % shardingCount
+ * - shardingCount：每个库的表数，如 8
+ * 生成的目标表名如：t_order_0, t_order_1 ...
+ * 优先使用 user_id 作为分片键，若不存在则回退使用 order_sn
  * 公众号：马丁玩编程，回复：加群，添加马哥微信（备注：12306）获取项目资料
  */
 public class OrderCommonTableComplexAlgorithm implements ComplexKeysShardingAlgorithm {
@@ -41,6 +46,11 @@ public class OrderCommonTableComplexAlgorithm implements ComplexKeysShardingAlgo
 
     private static final String SHARDING_COUNT_KEY = "sharding-count";
 
+    /**
+     * 根据分片值计算目标表名（如 t_order_0）
+     * 优先使用 user_id 作为分片键，若不存在则使用 order_sn 作为分片键
+     * 算法：取后6位 -> hash -> 绝对值 -> mod(分表数)
+     */
     @Override
     public Collection<String> doSharding(Collection availableTargetNames, ComplexKeysShardingValue shardingValue) {
         Map<String, Collection<Comparable<?>>> columnNameAndShardingValuesMap = shardingValue.getColumnNameAndShardingValuesMap();

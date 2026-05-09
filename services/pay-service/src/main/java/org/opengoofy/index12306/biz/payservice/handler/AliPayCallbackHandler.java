@@ -40,6 +40,14 @@ public final class AliPayCallbackHandler extends AbstractPayCallbackHandler impl
 
     private final PayService payService;
 
+    /**
+     * 处理支付宝异步支付回调
+     * 将支付宝回调参数转换为内部 PayCallbackReqDTO：
+     * - tradeStatus 映射为内部交易状态码（如 WAIT_BUYER_PAY -> 内部编码）
+     * - buyerPayAmount 为用户实际支付金额
+     * - tradeNo 为支付宝交易流水号
+     * 最终委托 PayService.callbackPay 完成后续支付状态更新和订单通知
+     */
     @Override
     public void callback(PayCallbackRequest payCallbackRequest) {
         AliPayCallbackRequest aliPayCallBackRequest = payCallbackRequest.getAliPayCallBackRequest();

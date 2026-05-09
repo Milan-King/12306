@@ -31,16 +31,21 @@ import java.util.List;
 public interface OrderItemService extends IService<OrderItemDO> {
 
     /**
-     * 子订单状态反转
+     * 子订单状态反转（退款场景使用）
+     * 同时更新订单主表状态和指定的子订单行状态
+     * 支持部分退款：只翻转退款涉及的那部分子订单，而非全部
+     * 通过 realName 匹配子订单行的乘客姓名，确保只操作退款目标的子订单
      *
-     * @param requestParam 请求参数
+     * @param requestParam 状态反转请求（含订单号、目标订单状态、目标子订单状态、待反转的子订单列表）
      */
     void orderItemStatusReversal(OrderItemStatusReversalDTO requestParam);
 
     /**
-     * 根据子订单记录id查询车票子订单详情
+     * 根据子订单记录 ID 列表批量查询对应的乘客车票详情
+     * 用于退款场景：从订单中精确获取需要退款的具体子订单信息
      *
-     * @param requestParam 请求参数
+     * @param requestParam 查询请求（含订单号和子订单 ID 列表）
+     * @return 乘客车票详情列表
      */
     List<TicketOrderPassengerDetailRespDTO> queryTicketItemOrderById(TicketOrderItemQueryReqDTO requestParam);
 }

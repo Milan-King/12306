@@ -46,10 +46,14 @@ public abstract class AbstractTrainPurchaseTicketTemplate implements IPurchaseTi
     private TrainStationService trainStationService;
 
     /**
-     * 选择座位
+     * 选择座位的模板方法，由子类实现具体的座位选择算法
+     * 各子类的座位布局和选择策略不同：
+     * - 商务座：小矩阵，相邻优先
+     * - 一等座：中等矩阵，相邻优先
+     * - 二等座：大矩阵（18行x5列），多种选择策略（相邻、同车厢非同排、跨车厢）
      *
-     * @param requestParam 购票请求入参
-     * @return 乘车人座位
+     * @param requestParam 购票请求入参（含座位类型、乘客明细、选座偏好）
+     * @return 每位乘客分配到的座位详情（车厢号、座位号）
      */
     protected abstract List<TrainPurchaseTicketRespDTO> selectSeats(SelectSeatDTO requestParam);
 
@@ -63,6 +67,11 @@ public abstract class AbstractTrainPurchaseTicketTemplate implements IPurchaseTi
                 .build();
     }
 
+    /**
+     * 执行座位选择并扣减 Redis 余票缓存
+     * 当 ticket.availability.cache-update.type = "binlog" 时跳过缓存扣减，
+     * 因为缓存数据将由 Canal 监听数据库 binlog 异步更新，保证最终一致性
+     */
     @Override
     public List<TrainPurchaseTicketRespDTO> executeResp(SelectSeatDTO requestParam) {
         List<TrainPurchaseTicketRespDTO> actualResult = selectSeats(requestParam);

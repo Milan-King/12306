@@ -33,6 +33,8 @@ import java.util.stream.Collectors;
  * 抽象责任链上下文
  * 公众号：马丁玩编程，回复：加群，添加马哥微信（备注：12306）获取项目资料
  */
+//CommandLineRunner的run在spring所有bean初始化完成后执行，用于完成一些代码的初始化，这里是用来初始化责任链组件
+
 public final class AbstractChainContext<T> implements CommandLineRunner {
 
     private final Map<String, List<AbstractChainHandler>> abstractChainHandlerContainer = new HashMap<>();

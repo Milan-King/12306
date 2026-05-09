@@ -59,6 +59,21 @@ public class SeatMarginCacheLoader {
     private final RedissonClient redissonClient;
     private final TrainStationService trainStationService;
 
+    /**
+     * 加载指定列车、座位类型、出发/到达站区间的余票缓存
+     * 使用分布式锁确保同一区间只加载一次，避免缓存击穿
+     * 根据列车类型（高铁/动车/普速）使用不同的座位类型编码进行统计：
+     * - 类型0（高铁）：座位类型 0,1,2（商务座、一等座、二等座）
+     * - 类型1（动车）：座位类型 3,4,5,13（商务座、一等座、二等座、无座）
+     * - 类型2（普速）：座位类型 6,7,8,13（高级软卧、软卧、硬卧、无座）
+     * TODO: 应使用已有列车类型座位枚举重构硬编码的 switch-case
+     *
+     * @param trainId   列车 ID
+     * @param seatType  座位类型
+     * @param departure 出发站
+     * @param arrival   到达站
+     * @return 指定区间各座位类型的余票数量映射
+     */
     public Map<String, String> load(String trainId, String seatType, String departure, String arrival) {
         Map<String, Map<String, String>> trainStationRemainingTicketMaps = new LinkedHashMap<>();
         String keySuffix = CacheUtil.buildKey(trainId, departure, arrival);

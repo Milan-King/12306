@@ -64,6 +64,20 @@ public final class TrainSeatTypeSelector {
     private final AbstractStrategyChoose abstractStrategyChoose;
     private final ThreadPoolExecutor selectSeatThreadPoolExecutor;
 
+    /**
+     * 根据列车类型和购票请求选择合适的座位分配策略
+     * 流程：
+     * 1. 将乘客按座位类型分组（如商务座、一等座、二等座）
+     * 2. 多座位类型时：通过线程池并行分配，提高购票效率
+     * 3. 单座位类型时：直接串行分配
+     * 4. 远程调用用户服务获取乘车人详情（身份证号、手机号等）
+     * 5. 查询票价信息填充到返回结果
+     * 6. 锁定沿途座位状态，防止区间超卖
+     *
+     * @param trainType    列车类型编码（0-高铁 1-动车 2-普速）
+     * @param requestParam 购票请求（含乘客列表、座位偏好、出发/到达站等）
+     * @return 每位乘客分配到的座位详情
+     */
     public List<TrainPurchaseTicketRespDTO> select(Integer trainType, PurchaseTicketReqDTO requestParam) {
         List<PurchaseTicketPassengerDetailDTO> passengerDetails = requestParam.getPassengers();
         Map<Integer, List<PurchaseTicketPassengerDetailDTO>> seatTypeMap = passengerDetails.stream()

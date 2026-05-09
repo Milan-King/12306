@@ -46,6 +46,15 @@ public class TicketAvailabilityCacheUpdateHandler implements AbstractExecuteStra
 
     private final DistributedCache distributedCache;
 
+    /**
+     * 监听 t_seat 表的 binlog 变更，实时更新 Redis 余票缓存
+     * 增量计算逻辑：
+     * - 对比每条记录的 old.seat_status 和 new.seat_status
+     * - 只有 old_status 在 0(AVAILABLE)/1(LOCKED) 且 new_status 也在 0/1 时才计算变更
+     * - 增量规则：old_status=0(可售) 表示原来可用现在被占用 => increment=-1
+     *            old_status=1(锁定) 表示原来被锁现在释放 => increment=+1
+     * 将变更按 trainId + 站点区间 + 座位类型分组后批量 Redis HINCRBY 更新
+     */
     @Override
     public void execute(CanalBinlogEvent message) {
         List<Map<String, Object>> messageDataList = new ArrayList<>();

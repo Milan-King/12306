@@ -68,6 +68,16 @@ public class RefundServiceImpl implements RefundService {
     private final AbstractStrategyChoose abstractStrategyChoose;
     private final RefundResultCallbackOrderSendProduce refundResultCallbackOrderSendProduce;
 
+    /**
+     * 退款完整流程实现
+     * 1. 查询支付单并校验存在性
+     * 2. 更新支付单的已退款金额（总金额 - 本次退款金额）
+     * 3. 创建退款记录（退款单写入 t_refund 表，分库分表）
+     * 4. 通过策略模式选择退款渠道 API 执行退款
+     * 5. 更新支付单和退款单的最终状态
+     * 6. 退款成功（TRADE_CLOSED）时发送 RocketMQ 消息通知订单服务
+     * 注意：当前返回 null 为占位实现
+     */
     @Override
     @Transactional
     public RefundRespDTO commonRefund(RefundReqDTO requestParam) {

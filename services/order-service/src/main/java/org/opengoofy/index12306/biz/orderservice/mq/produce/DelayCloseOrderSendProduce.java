@@ -47,6 +47,11 @@ public class DelayCloseOrderSendProduce extends AbstractCommonSendProduceTemplat
         this.environment = environment;
     }
 
+    /**
+     * 构建延迟关闭订单消息的发送参数
+     * delayLevel=14 对应 RocketMQ 的延迟级别，约等于 10 分钟
+     * RocketMQ 延迟级别参考：1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h
+     */
     @Override
     protected BaseSendExtendDTO buildBaseSendExtendParam(DelayCloseOrderEvent messageSendEvent) {
         return BaseSendExtendDTO.builder()

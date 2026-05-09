@@ -45,8 +45,8 @@ public class PayController {
     private final PayService payService;
 
     /**
-     * 公共支付接口
-     * 对接常用支付方式，比如：支付宝、微信以及银行卡等
+     * 公共支付接口，对接支付宝、微信等支付渠道
+     * 通过 PayRequestConvert 将前端请求转换为内部 PayRequest，再由策略模式分发到具体支付渠道
      */
     @PostMapping("/api/pay-service/pay/create")
     public Result<PayRespDTO> pay(@RequestBody PayCommand requestParam) {
@@ -56,7 +56,7 @@ public class PayController {
     }
 
     /**
-     * 跟据订单号查询支付单详情
+     * 根据订单号查询支付单详情（支付状态、金额、支付时间等）
      */
     @GetMapping("/api/pay-service/pay/query/order-sn")
     public Result<PayInfoRespDTO> getPayInfoByOrderSn(@RequestParam(value = "orderSn") String orderSn) {
@@ -64,7 +64,7 @@ public class PayController {
     }
 
     /**
-     * 跟据支付流水号查询支付单详情
+     * 根据支付流水号查询支付单详情（支付状态、金额、支付时间等）
      */
     @GetMapping("/api/pay-service/pay/query/pay-sn")
     public Result<PayInfoRespDTO> getPayInfoByPaySn(@RequestParam(value = "paySn") String paySn) {
@@ -72,8 +72,8 @@ public class PayController {
     }
 
     /**
-     * 公共退款接口
-     * 后续为了方便开发系列退款相关接口，已迁移 {@link RefundController#commonRefund(RefundReqDTO)}
+     * 公共退款接口（已废弃，请使用 RefundController 的新接口）
+     * @deprecated 后续为了方便开发系列退款相关接口，已迁移至 {@link RefundController#commonRefund(RefundReqDTO)}
      */
     @Deprecated
     @PostMapping("/api/pay-service/refund")

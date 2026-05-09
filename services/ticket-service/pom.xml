@@ -146,6 +146,11 @@
             <artifactId>activation</artifactId>
             <version>1.1.1</version>
         </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
         <!-- NoClassDefFoundError: javax/xml/bind/JAXBException end -->
     </dependencies>
 </project>

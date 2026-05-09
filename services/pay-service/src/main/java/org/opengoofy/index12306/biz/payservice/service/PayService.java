@@ -31,41 +31,48 @@ import org.opengoofy.index12306.biz.payservice.dto.base.PayRequest;
 public interface PayService {
 
     /**
-     * 创建支付单
+     * 创建支付单（通用支付接口）
+     * 通过策略模式动态选择支付渠道（当前支持支付宝页面支付）
+     * 流程：检查缓存 -> 策略分发 -> 调用支付渠道 API -> 创建支付记录 -> 缓存支付结果
+     * 使用 @Idempotent 注解防止重复创建支付单
      *
-     * @param requestParam 创建支付单实体
-     * @return 支付返回详情
+     * @param requestParam 创建支付单实体（含订单号、金额、支付渠道等）
+     * @return 支付返回详情（含支付表单 HTML 页面）
      */
     PayRespDTO commonPay(PayRequest requestParam);
 
     /**
-     * 支付单回调
+     * 处理支付回调通知（支付宝异步通知）
+     * 流程：查询支付单 -> 更新支付状态和流水号 -> 支付成功时发送 MQ 通知订单服务
+     * 注意：只有支付成功（TRADE_SUCCESS）时才触发订单状态流转通知
      *
-     * @param requestParam 回调支付单实体
+     * @param requestParam 回调支付单实体（含订单号、交易流水号、支付状态、支付时间、金额）
      */
     void callbackPay(PayCallbackReqDTO requestParam);
 
     /**
-     * 跟据订单号查询支付单详情
+     * 根据订单号查询支付单详情
      *
      * @param orderSn 订单号
-     * @return 支付单详情
+     * @return 支付单详情（支付状态、金额、支付时间等）
      */
     PayInfoRespDTO getPayInfoByOrderSn(String orderSn);
 
     /**
-     * 跟据支付流水号查询支付单详情
+     * 根据支付流水号查询支付单详情
      *
      * @param paySn 支付单流水号
-     * @return 支付单详情
+     * @return 支付单详情（支付状态、金额、支付时间等）
      */
     PayInfoRespDTO getPayInfoByPaySn(String paySn);
 
     /**
-     * 公共退款接口
+     * 公共退款接口（通用退款接口，当前为简化实现）
+     * 流程：查询支付单 -> 构建退款请求 -> 策略分发 -> 调用退款渠道 API -> 更新支付单状态
+     * 注意：当前返回 null 为占位实现，退款结果暂未完整返回
      *
-     * @param requestParam 退款请求参数
-     * @return 退款返回详情
+     * @param requestParam 退款请求参数（含订单号、退款金额、退款类型等）
+     * @return 退款返回详情（当前为占位空值）
      */
     RefundRespDTO commonRefund(RefundReqDTO requestParam);
 }

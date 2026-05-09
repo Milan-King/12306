@@ -50,6 +50,12 @@ public class OrderCloseCacheAndTokenUpdateHandler implements AbstractExecuteStra
     private final SeatService seatService;
     private final TicketAvailabilityTokenBucket ticketAvailabilityTokenBucket;
 
+    /**
+     * 监听 t_order 表的 binlog 变更，当订单状态变为 30（已关闭/已取消）时执行补偿操作：
+     * 1. 解锁列车座位（DB 层面恢复座位状态为可售）
+     * 2. 回滚令牌桶计数
+     * 采用 binlog 异步更新模式的优点：解耦订单状态变更和缓存更新，提高订单服务的响应速度
+     */
     @Override
     public void execute(CanalBinlogEvent message) {
         List<Map<String, Object>> messageDataList = message.getData().stream()

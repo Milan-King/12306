@@ -40,15 +40,23 @@ public final class PayIdGeneratorManager implements InitializingBean {
     private static DistributedIdGenerator DISTRIBUTED_ID_GENERATOR;
 
     /**
-     * 生成支付全局唯一流水号
+     * 生成支付全局唯一流水号（基因法）
+     * 格式：分布式雪花ID + 订单号后6位
+     * 基因法目的：将订单号的后缀融入支付流水号，这样 ShardingSphere 分库分表时可以通过支付流水号定位到同一分片
+     * 优点：查询支付单时无需每次都传订单号，用支付流水号即可路由到正确的数据库和表
      *
      * @param orderSn 订单号
-     * @return 支付流水号
+     * @return 支付流水号（分布式ID + 订单号后6位）
      */
     public static String generateId(String orderSn) {
         return DISTRIBUTED_ID_GENERATOR.generateId() + orderSn.substring(orderSn.length() - 6);
     }
 
+    /**
+     * Spring Bean 初始化：通过 Redis 分布式锁 + Redis 原子递增获取唯一的 nodeId（工作机器标识）
+     * nodeId 范围：0-31（最多 32 个应用实例），超过 32 自动回卷到 0
+     * 获取到 nodeId 后创建单例 DistributedIdGenerator
+     */
     @Override
     public void afterPropertiesSet() throws Exception {
         String LOCK_KEY = "distributed_pay_id_generator_lock_key";

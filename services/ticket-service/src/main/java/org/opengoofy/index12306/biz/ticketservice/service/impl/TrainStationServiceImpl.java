@@ -42,6 +42,9 @@ public class TrainStationServiceImpl implements TrainStationService {
 
     private final TrainStationMapper trainStationMapper;
 
+    /**
+     * 查询指定列车的所有经停站信息（站名、到站时间、发车时间等）
+     */
     @Override
     public List<TrainStationQueryRespDTO> listTrainStationQuery(String trainId) {
         LambdaQueryWrapper<TrainStationDO> queryWrapper = Wrappers.lambdaQuery(TrainStationDO.class)

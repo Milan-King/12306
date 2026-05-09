@@ -79,12 +79,18 @@ public final class TicketAvailabilityTokenBucket {
     private static final String LUA_TICKET_AVAILABILITY_ROLLBACK_TOKEN_BUCKET_PATH = "lua/ticket_availability_rollback_token_bucket.lua";
 
     /**
-     * 获取车站间令牌桶中的令牌访问
+     * 从令牌桶中尝试获取令牌（预售校验），防止高并发下超卖
+     * 流程：
+     * 1. 检查 Redis 中该列车的令牌桶是否存在，不存在则通过 DCL 锁初始化令牌桶
+     * 2. 令牌桶数据来源：从数据库查询每个站点区间各座位类型的余票数作为初始令牌
+     * 3. 执行 Lua 脚本原子扣减令牌，返回扣减结果
+     * 4. 返回 tokenIsNull=true 表示令牌不足，无法购票
+     * 注意：令牌桶初始化的数据来自 DB 座位表，与缓存余票是两套独立的数据
      * 如果返回 {@link Boolean#TRUE} 代表可以参与接下来的购票下单流程
      * 如果返回 {@link Boolean#FALSE} 代表当前访问出发站点和到达站点令牌已被拿完，无法参与购票下单等逻辑
      *
      * @param requestParam 购票请求参数入参
-     * @return 是否获取列车车票余量令牌桶中的令牌返回结果
+     * @return TokenResultDTO，tokenIsNull 为 true 表示令牌不足
      */
     public TokenResultDTO takeTokenFromBucket(PurchaseTicketReqDTO requestParam) {
         TrainDO trainDO = distributedCache.safeGet(
@@ -149,9 +155,11 @@ public final class TicketAvailabilityTokenBucket {
     }
 
     /**
-     * 回滚列车余量令牌，一般为订单取消或长时间未支付触发
+     * 回滚令牌桶中的令牌，在订单取消或支付超时后触发
+     * 通过 Lua 脚本将已扣除的令牌加回：根据乘客座位类型和数量恢复沿途站点区间的令牌
+     * Lua 脚本执行失败（result != 0）会抛出 ServiceException
      *
-     * @param requestParam 回滚列车余量令牌入参
+     * @param requestParam 订单详情，含车次、出发/到达站、乘客座位信息
      */
     public void rollbackInBucket(TicketOrderDetailRespDTO requestParam) {
         DefaultRedisScript<Long> actual = Singleton.get(LUA_TICKET_AVAILABILITY_ROLLBACK_TOKEN_BUCKET_PATH, () -> {
@@ -184,9 +192,10 @@ public final class TicketAvailabilityTokenBucket {
     }
 
     /**
-     * 删除令牌，一般在令牌与数据库不一致情况下触发
+     * 删除令牌桶缓存，用于令牌数据与数据库不一致时的强制刷新
+     * 调用场景：令牌桶缓存因并发或其他原因与数据库实际余票产生偏差时，删除缓存以便下次查询重新初始化
      *
-     * @param requestParam 删除令牌容器参数
+     * @param requestParam 购票请求参数（用于提取 trainId 定位令牌桶 key）
      */
     public void delTokenInBucket(PurchaseTicketReqDTO requestParam) {
         StringRedisTemplate stringRedisTemplate = (StringRedisTemplate) distributedCache.getInstance();
@@ -194,10 +203,18 @@ public final class TicketAvailabilityTokenBucket {
         stringRedisTemplate.delete(tokenBucketHashKey);
     }
 
+    /**
+     * 新增令牌到令牌桶（预留接口，暂未实现）
+     * 使用场景：系统管理员手动增加某列车某区间的余票令牌
+     */
     public void putTokenInBucket() {
 
     }
 
+    /**
+     * 初始化所有列车的令牌桶（预留接口，暂未实现）
+     * 使用场景：系统启动或定时任务批量初始化所有活跃列车的令牌数据，避免实时查询 DB 造成的冷启动延迟
+     */
     public void initializeTokens() {
 
     }

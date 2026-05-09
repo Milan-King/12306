@@ -51,7 +51,7 @@ public class TicketOrderController {
     private final OrderItemService orderItemService;
 
     /**
-     * 根据订单号查询车票订单
+     * 根据订单号查询车票订单详情（含乘客和座位信息）
      */
     @GetMapping("/api/order-service/order/ticket/query")
     public Result<TicketOrderDetailRespDTO> queryTicketOrderByOrderSn(@RequestParam(value = "orderSn") String orderSn) {
@@ -59,7 +59,7 @@ public class TicketOrderController {
     }
 
     /**
-     * 根据子订单记录id查询车票子订单详情
+     * 根据子订单记录 ID 列表查询对应的乘客车票详情（退款时使用）
      */
     @GetMapping("/api/order-service/order/item/ticket/query")
     public Result<List<TicketOrderPassengerDetailRespDTO>> queryTicketItemOrderById(TicketOrderItemQueryReqDTO requestParam) {
@@ -67,7 +67,7 @@ public class TicketOrderController {
     }
 
     /**
-     * 分页查询车票订单
+     * 分页查询车票订单（支持按订单状态过滤：待支付/已支付/已完成）
      */
     @GetMapping("/api/order-service/order/ticket/page")
     public Result<PageResponse<TicketOrderDetailRespDTO>> pageTicketOrder(TicketOrderPageQueryReqDTO requestParam) {
@@ -75,7 +75,7 @@ public class TicketOrderController {
     }
 
     /**
-     * 分页查询本人车票订单
+     * 分页查询本人车票订单（通过身份证号关联查询，包含他人为自己购买的车票）
      */
     @GetMapping("/api/order-service/order/ticket/self/page")
     public Result<PageResponse<TicketOrderDetailSelfRespDTO>> pageSelfTicketOrder(TicketOrderSelfPageQueryReqDTO requestParam) {
@@ -83,7 +83,7 @@ public class TicketOrderController {
     }
 
     /**
-     * 车票订单创建
+     * 创建车票订单，返回订单号
      */
     @PostMapping("/api/order-service/order/ticket/create")
     public Result<String> createTicketOrder(@RequestBody TicketOrderCreateReqDTO requestParam) {
@@ -91,7 +91,7 @@ public class TicketOrderController {
     }
 
     /**
-     * 车票订单关闭
+     * 关闭订单（支付超时自动触发）
      */
     @PostMapping("/api/order-service/order/ticket/close")
     public Result<Boolean> closeTickOrder(@RequestBody CancelTicketOrderReqDTO requestParam) {
@@ -99,7 +99,7 @@ public class TicketOrderController {
     }
 
     /**
-     * 车票订单取消
+     * 取消订单（用户主动取消）
      */
     @PostMapping("/api/order-service/order/ticket/cancel")
     public Result<Boolean> cancelTickOrder(@RequestBody CancelTicketOrderReqDTO requestParam) {

@@ -50,6 +50,12 @@ public class PayResultCallbackOrderConsumer implements RocketMQListener<MessageW
 
     private final OrderService orderService;
 
+    /**
+     * 消费支付成功回调消息，执行两个操作（在同一事务中）：
+     * 1. 订单状态反转：PENDING_PAYMENT -> ALREADY_PAID
+     * 2. 更新订单支付信息：写入支付时间和支付渠道
+     * 使用 @Idempotent 防止重复消费（72小时幂等窗口）
+     */
     @Idempotent(
             uniqueKeyPrefix = "index12306-order:pay_result_callback:",
             key = "#message.getKeys()+'_'+#message.hashCode()",

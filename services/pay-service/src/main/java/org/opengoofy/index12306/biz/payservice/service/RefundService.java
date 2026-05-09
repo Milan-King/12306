@@ -26,10 +26,13 @@ import org.opengoofy.index12306.biz.payservice.dto.RefundRespDTO;
 public interface RefundService {
 
     /**
-     * 公共退款接口
+     * 公共退款接口（完整退款流程）
+     * 相比 PayService.commonRefund 的简化版，本接口完成更完整的退款流程：
+     * 1. 更新支付金额 -> 创建退款记录 -> 调用退款渠道 API -> 更新支付单和退款单状态 -> 发送 MQ 回调订单服务
+     * 注意：当前返回 null 为占位实现，后续需构造完整 RefundRespDTO 返回退款详情
      *
-     * @param requestParam 退款请求参数
-     * @return 退款返回详情
+     * @param requestParam 退款请求参数（含订单号、退款金额、退款类型、退款子订单明细等）
+     * @return 退款返回详情（当前为占位空值）
      */
     RefundRespDTO commonRefund(RefundReqDTO requestParam);
 }

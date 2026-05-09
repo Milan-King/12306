@@ -109,7 +109,7 @@ public interface DistributedCache extends Cache {
     void safePut(@NotBlank String key, Object value, long timeout, RBloomFilter<String> bloomFilter);
 
     /**
-     * 放入缓存，自定义超时时间，并将 key 加入步隆过滤器。极大概率通过此方式防止：缓存穿透、缓存击穿、缓存雪崩
+     * 放入缓存，自定义超时时间，并将 key 加入布隆过滤器。极大概率通过此方式防止：缓存穿透、缓存击穿、缓存雪崩
      * 通过此方式防止程序中可能出现的：缓存穿透、缓存击穿以及缓存雪崩场景，需要客户端传递布隆过滤器，适用于被外部直接调用的接口
      */
     void safePut(@NotBlank String key, Object value, long timeout, TimeUnit timeUnit, RBloomFilter<String> bloomFilter);

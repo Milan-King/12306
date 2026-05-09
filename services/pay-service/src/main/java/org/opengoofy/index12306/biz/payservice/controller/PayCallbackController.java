@@ -44,8 +44,13 @@ public class PayCallbackController {
     private final AbstractStrategyChoose abstractStrategyChoose;
 
     /**
-     * 支付宝回调
-     * 调用支付宝支付后，支付宝会调用此接口发送支付结果
+     * 支付宝异步支付回调入口
+     * 支付宝支付完成后，以 POST 表单形式将支付结果发送到此接口
+     * 处理流程：
+     * 1. 将 form 参数 map 转换为 PayCallbackCommand
+     * 2. 手动提取 out_trade_no（订单请求号）和 gmt_payment（支付时间）
+     * 3. 通过 PayCallbackRequestConvert 转换为内部回调请求
+     * 4. 策略模式分发到 AliPayCallbackHandler 进行后续处理
      */
     @PostMapping("/api/pay-service/callback/alipay")
     public void callbackAlipay(@RequestParam Map<String, Object> requestParam) {

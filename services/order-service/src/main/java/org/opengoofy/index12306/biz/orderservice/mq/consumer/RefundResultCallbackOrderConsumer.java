@@ -56,6 +56,12 @@ public class RefundResultCallbackOrderConsumer implements RocketMQListener<Messa
 
     private final OrderItemService orderItemService;
 
+    /**
+     * 消费退款结果回调消息，根据退款类型执行不同的状态反转：
+     * - 部分退款（PARTIAL_REFUND）：只翻转退款的那部分子订单状态为 REFUNDED
+     * - 全额退款（FULL_REFUND）：翻转整个订单及所有子订单状态为 REFUNDED
+     * 使用 @Idempotent 防止重复消费（72小时幂等窗口）
+     */
     @Idempotent(
             uniqueKeyPrefix = "index12306-order:refund_result_callback:",
             key = "#message.getKeys()+'_'+#message.hashCode()",

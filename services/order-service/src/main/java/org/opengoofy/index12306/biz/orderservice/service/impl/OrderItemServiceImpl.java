@@ -58,6 +58,13 @@ public class OrderItemServiceImpl extends ServiceImpl<OrderItemMapper, OrderItem
 
     private final RedissonClient redissonClient;
 
+    /**
+     * 子订单状态反转（退款场景调用）
+     * 同时更新订单主表状态和指定子订单行状态：
+     * - 订单主表：更新整体订单状态
+     * - 子订单：根据 realName 匹配更新具体乘客的子订单状态（支持部分退款，只翻转退款的子订单）
+     * 使用分布式锁防止并发重复操作
+     */
     @Override
     @Transactional
     public void orderItemStatusReversal(OrderItemStatusReversalDTO requestParam) {
@@ -101,6 +108,10 @@ public class OrderItemServiceImpl extends ServiceImpl<OrderItemMapper, OrderItem
         }
     }
 
+    /**
+     * 根据子订单记录 ID 列表查询对应的乘客车票详情
+     * 用于退款时精确获取需要退款的具体子订单信息
+     */
     @Override
     public List<TicketOrderPassengerDetailRespDTO> queryTicketItemOrderById(TicketOrderItemQueryReqDTO requestParam) {
         LambdaQueryWrapper<OrderItemDO> queryWrapper = Wrappers.lambdaQuery(OrderItemDO.class)
